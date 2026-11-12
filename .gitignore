@@ -1,0 +1,22 @@
+# 데이터 (AI Hub 이용 약관상 원본 재배포 금지, 용량 큼)
+data/*
+!data/.gitkeep
+*.zip
+
+# 가상환경
+.venv/
+venv/
+
+# 비밀값
+.env
+
+# 모델 가중치
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.safetensors
+
+# 파이썬/노트북 잡파일
+__pycache__/
+.ipynb_checkpoints/
