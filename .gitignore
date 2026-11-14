@@ -24,3 +24,6 @@ __pycache__/
 # Claude Code 개인 설정
 CLAUDE.local.md
 .claude/settings.local.json
+
+# 추론 결과 (원본 사진이 겹쳐 있어 재배포 금지)
+out/
