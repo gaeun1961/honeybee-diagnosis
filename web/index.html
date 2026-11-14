@@ -270,10 +270,24 @@ a:focus-visible, button:focus-visible { outline: 3px solid var(--honey); outline
 .sample b { font-weight: 600; font-size: 15px; }
 .sample small { color: var(--muted); font-size: 12.5px; font-family: var(--f-mono); }
 .upload {
+  display: block; text-align: center;
   margin-top: 18px; width: 100%; padding: 12px; border-radius: 10px;
   border: 1.5px dashed var(--line); background: transparent; color: var(--muted);
-  font: inherit; font-size: 14px; cursor: not-allowed;
+  font: inherit; font-size: 14px; cursor: pointer;
+  transition: border-color 0.2s, color 0.2s, background 0.2s;
 }
+.upload:hover, .upload.drag { border-color: var(--ink); color: var(--ink); }
+.upload.drag { background: var(--paper); }
+.upload:focus-within { outline: 3px solid var(--honey); outline-offset: 3px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.shot { margin: 16px 0 0; }
+.shot img { display: block; width: 100%; height: auto; border-radius: 10px; border: 1px solid var(--line); background: var(--paper); }
+.shot figcaption { margin-top: 6px; font-family: var(--f-mono); font-size: 12px; color: var(--muted); }
+.alert { margin-top: 16px; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--mite); font-size: 14px; }
+.alert code { font-family: var(--f-mono); font-size: 0.95em; }
+.panel[aria-busy="true"] .verdict, .panel[aria-busy="true"] .bars { opacity: 0.45; }
+.verdict, .bars { transition: opacity 0.3s; }
+.run:disabled { opacity: 0.5; cursor: progress; transform: none; }
 .run {
   appearance: none; border: 0; cursor: pointer; margin-top: 18px;
   font: inherit; font-weight: 600; font-size: 15px;
@@ -407,7 +421,7 @@ a:focus-visible, button:focus-visible { outline: 3px solid var(--honey); outline
     <p class="label" style="color: var(--muted)">서비스 미리보기</p>
     <h2 style="margin-top: 12px">사진을 올리면 질병을 가려냅니다</h2>
     <p class="intro">분류 모델이 사진 한 장을 보고 클래스별 확률을 돌려주고, 이미지 속 병변 위치를 박스로 보여주는 화면을 만들 예정입니다.</p>
-    <span class="badge">예시 화면 · 모델 연결 전, 아래 확률은 샘플 값입니다</span>
+    <span class="badge" id="badge">예시 화면 · 모델 연결 전, 아래 확률은 샘플 값입니다</span>
 
     <div class="demo-grid">
       <div class="panel">
@@ -418,15 +432,23 @@ a:focus-visible, button:focus-visible { outline: 3px solid var(--honey); outline
           <button class="sample" role="radio" aria-checked="false" data-i="2" style="--c: var(--chalk)"><span class="tile"></span><b>샘플 C</b><small>유충 · 플레이트 촬영</small></button>
           <button class="sample" role="radio" aria-checked="false" data-i="3" style="--c: var(--norm)"><span class="tile"></span><b>샘플 D</b><small>유충 · 소문 촬영</small></button>
         </div>
-        <button class="upload" type="button" disabled>내 사진 올리기 (모델 연결 후 열립니다)</button>
+        <label class="upload" id="drop">
+          <input type="file" id="file" accept="image/*" class="sr-only">
+          내 사진 올리기 · 클릭하거나 여기로 끌어다 놓기
+        </label>
+        <figure class="shot" id="preview-fig" hidden>
+          <img id="preview" alt="올린 사진 미리보기">
+          <figcaption>올린 사진 · 이 브라우저에서만 보입니다</figcaption>
+        </figure>
         <button class="run" id="run" type="button">진단 실행</button>
       </div>
 
-      <div class="panel" aria-live="polite">
+      <div class="panel" id="result" aria-live="polite" aria-busy="false">
         <div class="result-head">
           <h3>진단 결과</h3>
           <span class="label" style="color: var(--muted)" id="status">샘플 값</span>
         </div>
+        <p class="alert" id="alert" role="alert" hidden></p>
         <p class="verdict" id="verdict">응애 의심<small id="verdict-p">87%</small></p>
         <div class="bars">
           <div class="row" style="--c: var(--mite)"><span>응애</span><div class="track"><div class="fill" data-k="0"></div></div><output id="o0">0%</output></div>
@@ -434,6 +456,10 @@ a:focus-visible, button:focus-visible { outline: 3px solid var(--honey); outline
           <div class="row" style="--c: var(--chalk)"><span>석고병</span><div class="track"><div class="fill" data-k="2"></div></div><output id="o2">0%</output></div>
           <div class="row" style="--c: var(--norm)"><span>정상</span><div class="track"><div class="fill" data-k="3"></div></div><output id="o3">0%</output></div>
         </div>
+        <figure class="shot" id="cam-fig" hidden>
+          <img id="cam" alt="병변 위치 Grad-CAM 히트맵을 올린 사진에 겹친 그림">
+          <figcaption id="cam-cap">병변 위치(Grad-CAM)</figcaption>
+        </figure>
         <p class="note">실제 서비스에서는 가장 높은 확률과 함께 이미지 속 병변 위치를 박스로 표시하고, 확률이 낮으면 양봉가에게 재촬영을 요청합니다.</p>
       </div>
     </div>
@@ -670,25 +696,105 @@ a:focus-visible, button:focus-visible { outline: 3px solid var(--honey); outline
   var fills = document.querySelectorAll('.fill');
   var cur = 0;
 
+  function $(id) { return document.getElementById(id); }
+  /* vals: 막대 순서 [응애, 부저병, 석고병, 정상], null이면 값 없음(–) */
+  function setBars(vals, animate) {
+    fills.forEach(function (f, k) {
+      if (animate) { f.style.transition = 'none'; f.style.width = '0%'; void f.offsetWidth; f.style.transition = ''; }
+      f.style.width = (vals[k] == null ? 0 : vals[k]) + '%';
+      $('o' + k).textContent = vals[k] == null ? '–' : vals[k] + '%';
+    });
+  }
+  function setVerdict(text, small) {
+    $('verdict').firstChild.nodeValue = text;
+    $('verdict-p').textContent = small;
+  }
   function show(i, animate) {
     var s = SAMPLES[i];
     var top = s.p.indexOf(Math.max.apply(null, s.p));
-    document.getElementById('verdict').firstChild.nodeValue = NAMES[top];
-    document.getElementById('verdict-p').textContent = s.p[top] + '%';
-    fills.forEach(function (f, k) {
-      if (animate) { f.style.transition = 'none'; f.style.width = '0%'; void f.offsetWidth; f.style.transition = ''; }
-      f.style.width = s.p[k] + '%';
-      document.getElementById('o' + k).textContent = s.p[k] + '%';
-    });
+    setVerdict(NAMES[top], s.p[top] + '%');
+    setBars(s.p, animate);
   }
+
+  /* ---- 로컬 서버 연결 ---- */
+  var API = 'http://127.0.0.1:8000/predict';
+  var OFF_MSG = '로컬 서버가 꺼져 있습니다. <code>python src/serve.py</code> 실행 후 다시 시도하세요.';
+  var badge = $('badge'), status = $('status'), alertEl = $('alert'), result = $('result'), runBtn = $('run');
+  var BADGE_SAMPLE = badge.textContent, BADGE_REAL = '실제 모델 결과 · 참고용, 진단이 아닙니다';
+  var file = null, previewUrl = null, reqId = 0;
+
+  function showAlert(html) { alertEl.innerHTML = html; alertEl.hidden = !html; }
+  function busy(on) { result.setAttribute('aria-busy', on ? 'true' : 'false'); runBtn.disabled = on; }
+  function sampleMode() {
+    reqId++; busy(false); showAlert('');
+    badge.textContent = BADGE_SAMPLE; status.textContent = '샘플 값';
+    $('cam-fig').hidden = true;
+  }
+  function pct(p) { return Math.round(p * 100); }
+  function showReal(j) {
+    var p = j.probs;
+    setBars([pct(p['응애']), pct(p['부저병']), pct(p['석고병']), null], true);
+    var normal = j.verdict.length === 1 && j.verdict[0] === '정상';
+    setVerdict(normal ? '정상' : j.verdict.join('·') + ' 의심', (normal ? '최고 ' : '') + j.top + ' ' + pct(p[j.top]) + '%');
+    $('cam').src = j.cam;
+    $('cam-cap').textContent = '병변 위치(Grad-CAM) · ' + j.top + ' 기준, 붉을수록 모델이 주목한 곳';
+    $('cam-fig').hidden = false;
+    badge.textContent = BADGE_REAL; status.textContent = '실제 모델 결과';
+  }
+  function send() {
+    var my = ++reqId, fd = new FormData();
+    fd.append('file', file);  /* serve.py: predict(file: UploadFile) */
+    busy(true); showAlert(''); $('cam-fig').hidden = true; status.textContent = '분석 중…';
+    fetch(API, { method: 'POST', body: fd })
+      .then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (j) {
+          if (!r.ok || !j.probs) throw { server: true, msg: j.detail || '서버 오류 (' + r.status + ')' };
+          return j;
+        });
+      })
+      .then(function (j) { if (my === reqId) { showReal(j); busy(false); } })
+      .catch(function (e) {
+        if (my !== reqId) return;
+        busy(false);
+        badge.textContent = BADGE_SAMPLE;
+        /* 화면의 막대·판정은 예시 값으로 되돌림 (배지와 일치하도록) */
+        btns.forEach(function (x, k) { x.setAttribute('aria-checked', k === cur ? 'true' : 'false'); });
+        show(cur, false);
+        if (e && e.server) { showAlert(''); alertEl.textContent = e.msg; alertEl.hidden = false; status.textContent = '오류'; }
+        else { showAlert(OFF_MSG); status.textContent = '서버 꺼짐'; }
+      });
+  }
+  function pick(f) {
+    if (!f) return;
+    if (!/^image\//.test(f.type)) { alertEl.textContent = '이미지 파일만 올릴 수 있습니다.'; alertEl.hidden = false; return; }
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    previewUrl = URL.createObjectURL(f);
+    $('preview').src = previewUrl; $('preview-fig').hidden = false;
+    file = f;
+    btns.forEach(function (x) { x.setAttribute('aria-checked', 'false'); });
+    send();
+  }
+
+  var input = $('file'), drop = $('drop');
+  input.addEventListener('change', function () { pick(input.files[0]); input.value = ''; });
+  ['dragenter', 'dragover'].forEach(function (t) {
+    drop.addEventListener(t, function (e) { e.preventDefault(); drop.classList.add('drag'); });
+  });
+  ['dragleave', 'drop'].forEach(function (t) {
+    drop.addEventListener(t, function (e) { e.preventDefault(); drop.classList.remove('drag'); });
+  });
+  drop.addEventListener('drop', function (e) { pick(e.dataTransfer.files[0]); });
+
   btns.forEach(function (b) {
     b.addEventListener('click', function () {
       cur = +b.getAttribute('data-i');
       btns.forEach(function (x) { x.setAttribute('aria-checked', x === b ? 'true' : 'false'); });
+      file = null; $('preview-fig').hidden = true;
+      sampleMode();
       show(cur, true);
     });
   });
-  document.getElementById('run').addEventListener('click', function () { show(cur, true); });
+  runBtn.addEventListener('click', function () { if (file) send(); else show(cur, true); });
   show(0, false);
 })();
 </script>
