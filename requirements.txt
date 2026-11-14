@@ -5,3 +5,6 @@ scikit-learn
 pillow
 matplotlib
 jupyter
+fastapi
+uvicorn
+python-multipart
