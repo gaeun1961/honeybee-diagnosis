@@ -4,7 +4,8 @@
 
 1단계: VS.zip의 유충 이미지마다 파일명이 같은 VL.zip JSON의 category_id로 라벨 생성 -> data/labels_larva.csv
        (1=응애, 2=석고병, 3=부저병, 병 번호 없음=정상. 0·4~6은 무시. 폴더명은 신뢰하지 않음: 석고병/부저병이 뒤바뀜)
-       이미 있으면 재사용, --rebuild면 다시 만듦.
+       area_응애/석고병/부저병 = 클래스별 최대 박스 비율(JSON area / 이미지 넓이), 없으면 0. subset/labels.csv에도 전달.
+       이미 있으면 재사용, --rebuild면 다시 만듦 (박스 비율 열이 없는 예전 파일이면 자동으로 다시 만듦).
 2단계: 석고병 -> 부저병 -> 응애 -> 정상 순으로 클래스별 최대 N장 무작위 표본 (중복 없음, 앞에서 뽑힌 이미지도 그 클래스 몫으로 셈)
        정상 = 폴더가 유충_정상이고 병 번호가 없는 이미지.
        가로 --width로 줄여 data/subset/images/{stem}.jpg (JPEG 90), data/subset/labels.csv 작성.
@@ -28,6 +29,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DISEASE = {1: "응애", 2: "석고병", 3: "부저병"}
 ORDER = ["석고병", "부저병", "응애", "정상"]
 IMG_EXTS = (".jpg", ".jpeg", ".png")
+AREA_COLS = [f"area_{n}" for n in DISEASE.values()]  # 클래스별 최대 박스 비율 (JSON area / 이미지 넓이), 없으면 0
 
 
 def larva_folder(path):
@@ -46,14 +48,23 @@ def build_labels(vs_path, vl_path, csv_path):
             if j is None:  # 라벨 없는 이미지는 정상으로 치지 않고 뺀다
                 missing += 1
                 continue
-            anns = load(vl, j).get("annotations", [])
+            d = load(vl, j)
+            anns = d.get("annotations", [])
             ids = {a.get("category_id") for a in anns}
+            img = d.get("image") or {}
+            img_area = (img.get("width") or 0) * (img.get("height") or 0)
+            area = {name: 0.0 for name in DISEASE.values()}
+            for a in anns:
+                name = DISEASE.get(a.get("category_id"))
+                if name and img_area:
+                    area[name] = max(area[name], (a.get("area") or 0) / img_area)
             rows.append({"zip_path": p, "stem": stem(p), "folder": folder,
                          **{name: int(cid in ids) for cid, name in DISEASE.items()},
-                         "n_boxes": len(anns)})
+                         "n_boxes": len(anns),
+                         **{f"area_{n}": f"{v:.6f}" for n, v in area.items()}})
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=["zip_path", "stem", "folder", *DISEASE.values(), "n_boxes"])
+        w = csv.DictWriter(f, fieldnames=["zip_path", "stem", "folder", *DISEASE.values(), "n_boxes", *AREA_COLS])
         w.writeheader()
         w.writerows(rows)
     print(f"라벨 {len(rows):,}장 -> {csv_path}" + (f" (JSON 없는 이미지 {missing:,}장 제외)" if missing else ""))
@@ -92,14 +103,14 @@ def write_subset(vs_path, sample, out_dir, width):
     img_dir.mkdir(parents=True)
     with zipfile.ZipFile(vs_path) as vs, open(out_dir / "labels.csv", "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["file", *DISEASE.values()])
+        w.writerow(["file", *DISEASE.values(), *AREA_COLS])
         for r in sample:
             im = Image.open(io.BytesIO(vs.read(r["zip_path"]))).convert("RGB")
             if im.width > width:
                 im = im.resize((width, round(im.height * width / im.width)), Image.LANCZOS)
             name = f"{r['stem']}.jpg"
             im.save(img_dir / name, "JPEG", quality=90)
-            w.writerow([name, *(r[n] for n in DISEASE.values())])
+            w.writerow([name, *(r[n] for n in DISEASE.values()), *(r[c] for c in AREA_COLS)])
 
 
 if __name__ == "__main__":
@@ -114,6 +125,11 @@ if __name__ == "__main__":
     a = ap.parse_args()
 
     csv_path = a.data_dir / "labels_larva.csv"
+    if not a.rebuild and csv_path.exists():
+        with open(csv_path, encoding="utf-8") as f:
+            if not set(AREA_COLS) <= set(next(csv.reader(f))):
+                print(f"{csv_path}에 박스 비율 열이 없어 다시 만듭니다")
+                a.rebuild = True
     if a.rebuild or not csv_path.exists():
         build_labels(a.vs, a.vl, csv_path)
     else:

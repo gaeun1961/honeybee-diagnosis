@@ -5,6 +5,8 @@
 - val에서 클래스별 F1이 최대인 임계값을 찾고, test에서 0.5 기준과 비교
 - test 정답 라벨 조합별로 클래스마다 잘못 켠 장수(+)와 놓친 장수(-)
 - 확률 오차(|정답-확률| 합)가 큰 test 이미지 15장 -> docs/eval_errors.md (파일명만, 이미지는 저장 안 함)
+- 클래스별 양성 test 이미지를 최대 박스 비율 구간(작음 <1%, 중간 1~5%, 큼 >=5%)으로 나눈 재현율 -> 출력 + eval_errors.md 끝
+  (labels.csv에 area_* 열이 필요: make_subset.py로 표본을 다시 만들 것)
 """
 import argparse
 from collections import defaultdict
@@ -21,6 +23,7 @@ from train import LABELS, MEAN, STD, Larva, load_rows
 
 ROOT = Path(__file__).resolve().parent.parent
 TOP_ERRORS = 15
+SIZE_BINS = [("작음 <1%", 0.0, 0.01), ("중간 1~5%", 0.01, 0.05), ("큼 >=5%", 0.05, float("inf"))]
 
 
 @torch.no_grad()
@@ -50,6 +53,19 @@ def best_thresholds(y, p):
 def combo(row):
     on = [c for c, v in zip(LABELS, row) if v]
     return "+".join(on) if on else "정상"
+
+
+def size_recall(rows, y, pred):
+    """클래스별·박스 비율 구간별 [클래스, 구간, 양성 장수, 재현율, 놓침 비율]"""
+    out = []
+    for k, c in enumerate(LABELS):
+        area = np.array([float(r[f"area_{c}"]) for r in rows])
+        for name, lo, hi in SIZE_BINS:
+            m = (y[:, k] == 1) & (area >= lo) & (area < hi)
+            n = int(m.sum())
+            rec = pred[m, k].mean() if n else float("nan")
+            out.append([c, name, n, "-" if not n else f"{rec:.3f}", "-" if not n else f"{1 - rec:.3f}"])
+    return out
 
 
 def table(headers, rows):
@@ -101,6 +117,14 @@ def main():
          "val 최적 임계값: " + ", ".join(f"{c} {t:.3f}" for c, t in zip(LABELS, th)), "",
          table(["파일", "정답", *[f"{c} 확률" for c in LABELS], "오차"],
                [[files[i], combo(yt[i]), *[f"{v:.3f}" for v in pt[i]], f"{err[i]:.3f}"] for i in idx])]
+    if rows["test"] and all(f"area_{c}" in rows["test"][0] for c in LABELS):
+        sec = ["## 박스 크기별 재현율 (test, val 최적 임계값)", "",
+               "정답이 양성인 이미지를 그 클래스의 최대 박스 비율(박스 넓이 / 이미지 넓이)로 나눔.", "",
+               table(["클래스", "박스 비율", "장수", "재현율", "놓침 비율"], size_recall(rows["test"], yt, pred))]
+    else:
+        sec = ["## 박스 크기별 재현율", "", "labels.csv에 area_* 열이 없어 건너뜀 (make_subset.py로 표본을 다시 만들 것)."]
+    print("\n" + "\n".join(sec))
+    L += [""] + sec
     path = a.out_root / "docs/eval_errors.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(L) + "\n", encoding="utf-8")
