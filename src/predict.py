@@ -28,6 +28,12 @@ def load_model(weights):
     return model.eval(), ckpt["size"]
 
 
+def preprocess(size):
+    """train.py 평가용과 같은 전처리: 16:9 리사이즈 (size x size*9/16) + ImageNet 정규화"""
+    return transforms.Compose([transforms.Resize((round(size * 9 / 16), size)),
+                               transforms.ToTensor(), transforms.Normalize(MEAN, STD)])
+
+
 def grad_cam(model, x):
     """확률(=logit) 최고 클래스 기준 layer4 Grad-CAM. (probs, top, cam[h,w] 0~1) 반환"""
     feats = {}
@@ -57,9 +63,7 @@ def main():
 
     model, size = load_model(a.weights)
     img = Image.open(a.image).convert("RGB")
-    tf = transforms.Compose([transforms.Resize((round(size * 9 / 16), size)),
-                             transforms.ToTensor(), transforms.Normalize(MEAN, STD)])
-    probs, top, cam = grad_cam(model, tf(img).unsqueeze(0))
+    probs, top, cam = grad_cam(model, preprocess(size)(img).unsqueeze(0))
 
     for c, p in zip(LABELS, probs):
         print(f"{c}: {p:.3f}")
