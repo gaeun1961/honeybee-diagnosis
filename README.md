@@ -28,6 +28,8 @@ python src/evaluate.py                          # 임계값 조정·오답 분�
 python src/serve.py                             # 진단 API (http://127.0.0.1:8000)
 python -m http.server 5500 --directory web      # 다른 터미널에서 웹 페이지 서버
 ```
+512px 학습은 384px보다 입력 픽셀이 약 1.8배 많아 CPU에서 더 오래 걸립니다. 빨리 돌려 보려면 `--size 384`(train.py 기본값)로 학습하고 `serve.py --size 384`로 맞추세요.
+
 브라우저에서 http://localhost:5500 을 열고 "서비스 미리보기"에서 사진을 올립니다.
 
 ## 성능
