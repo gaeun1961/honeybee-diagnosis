@@ -1,15 +1,17 @@
 """유충 다중 라벨 분류 베이스라인 (ResNet18, CPU)
 
-실행: python src/train.py [--epochs 8] [--size 384] [--batch 16] [--lr 1e-3]
-입력: data/subset/images, labels.csv(file, 응애, 석고병, 부저병), split.csv(file, split)
-출력: models/best.pt (val 평균 AP 최고), docs/baseline.md (test 지표)
+실행: python src/train.py [--epochs 8] [--size 384] [--batch 16] [--lr 1e-3] [--aug basic|strong]
+입력: data/subset/images, labels.csv(file, 응애, 석고병, 부저병), split.csv(file, split) (--split로 변경 가능)
+출력: models/best.pt (val 평균 AP 최고), docs/baseline.md (test 지표) (--weights-out, --report로 변경 가능)
 
 - 출력 3개(응애·석고병·부저병), BCEWithLogitsLoss + pos_weight(neg/pos). 셋 다 0 = 정상
 - 입력 16:9 유지 (size x size*9/16), 학습 증강은 좌우 반전 + 약한 색 변화
+  (--aug strong: 좌우 반전 + 회전 ±15도 + 강한 색 변화)
 - 처음 2 epoch은 fc만 lr로, 이후 전체를 lr/10으로 미세조정
 """
 import argparse
 import csv
+import json
 import math
 import time
 from pathlib import Path
@@ -41,10 +43,10 @@ class Larva(Dataset):
         return x, torch.tensor([float(r[c]) for c in LABELS])
 
 
-def load_rows(sub):
+def load_rows(sub, split_path=None):
     with open(sub / "labels.csv", encoding="utf-8") as f:
         labels = {r["file"]: r for r in csv.DictReader(f)}
-    with open(sub / "split.csv", encoding="utf-8") as f:
+    with open(split_path or sub / "split.csv", encoding="utf-8") as f:
         split = {r["file"]: r["split"] for r in csv.DictReader(f)}
     out = {"train": [], "val": [], "test": []}
     for file, s in split.items():
@@ -82,7 +84,8 @@ def set_phase(model, epoch, lr):
 
 def write_report(path, m, a, best_epoch, best_val, counts):
     L = ["# 베이스라인 (ResNet18 다중 라벨)", "",
-         f"`python src/train.py --epochs {a.epochs} --size {a.size} --batch {a.batch} --lr {a.lr}`로 생성.",
+         f"`python src/train.py --epochs {a.epochs} --size {a.size} --batch {a.batch} --lr {a.lr}"
+         + (f" --aug {a.aug}" if a.aug != "basic" else "") + (f" --split {a.split.name}" if a.split else "") + "`로 생성.",
          f"이미지 train {counts['train']} / val {counts['val']} / test {counts['test']}장. "
          f"val 평균 AP 최고 epoch {best_epoch} ({best_val:.3f})의 가중치로 test 평가. F1은 임계값 0.5.", "",
          "| 클래스 | test 양성 수 | AP | F1@0.5 |", "|---|---|---|---|"]
@@ -102,15 +105,21 @@ def main():
     ap.add_argument("--data-dir", type=Path, default=ROOT / "data")
     ap.add_argument("--out-root", type=Path, default=ROOT, help="models/best.pt, docs/baseline.md를 쓸 위치")
     ap.add_argument("--no-pretrained", action="store_true", help="ImageNet 가중치 없이 (시험용)")
+    ap.add_argument("--aug", choices=["basic", "strong"], default="basic")
+    ap.add_argument("--split", type=Path, help="분할 csv (기본: data/subset/split.csv)")
+    ap.add_argument("--weights-out", type=Path, help="기본: {out-root}/models/best.pt")
+    ap.add_argument("--report", type=Path, help="기본: {out-root}/docs/baseline.md")
+    ap.add_argument("--metrics-json", type=Path, help="test 지표를 json으로도 저장 (sweep.py용)")
     a = ap.parse_args()
     torch.manual_seed(0)
 
     sub = a.data_dir / "subset"
-    rows = load_rows(sub)
+    rows = load_rows(sub, a.split)
     hw = (round(a.size * 9 / 16), a.size)
     norm = [transforms.ToTensor(), transforms.Normalize(MEAN, STD)]
-    train_tf = transforms.Compose([transforms.Resize(hw), transforms.RandomHorizontalFlip(),
-                                   transforms.ColorJitter(0.1, 0.1, 0.1), *norm])
+    aug = ([transforms.RandomRotation(15), transforms.ColorJitter(0.3, 0.3, 0.3, 0.05)] if a.aug == "strong"
+           else [transforms.ColorJitter(0.1, 0.1, 0.1)])
+    train_tf = transforms.Compose([transforms.Resize(hw), transforms.RandomHorizontalFlip(), *aug, *norm])
     eval_tf = transforms.Compose([transforms.Resize(hw), *norm])
     loaders = {s: DataLoader(Larva(sub / "images", rows[s], train_tf if s == "train" else eval_tf),
                              batch_size=a.batch, shuffle=s == "train") for s in rows}
@@ -124,7 +133,7 @@ def main():
     model.fc = nn.Linear(model.fc.in_features, len(LABELS))
     loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
-    best_path = a.out_root / "models/best.pt"
+    best_path = a.weights_out or a.out_root / "models/best.pt"
     best_path.parent.mkdir(parents=True, exist_ok=True)
     best, best_epoch = -math.inf, 0
     for epoch in range(a.epochs):
@@ -151,9 +160,13 @@ def main():
     model.load_state_dict(torch.load(best_path)["state_dict"])
     m = evaluate(model, loaders["test"])
     print(f"test {fmt(m)}")
-    report = a.out_root / "docs/baseline.md"
+    report = a.report or a.out_root / "docs/baseline.md"
     write_report(report, m, a, best_epoch, best, {s: len(r) for s, r in rows.items()})
     print("wrote", report)
+    if a.metrics_json:
+        a.metrics_json.parent.mkdir(parents=True, exist_ok=True)
+        a.metrics_json.write_text(json.dumps({"labels": LABELS, "best_epoch": best_epoch, "best_val_map": best, **m},
+                                             ensure_ascii=False), encoding="utf-8")
 
 
 if __name__ == "__main__":
