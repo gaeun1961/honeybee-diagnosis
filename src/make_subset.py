@@ -9,7 +9,7 @@
 2단계: 석고병 -> 부저병 -> 응애 -> 정상 순으로 클래스별 최대 N장 무작위 표본 (중복 없음, 앞에서 뽑힌 이미지도 그 클래스 몫으로 셈)
        정상 = 폴더가 유충_정상이고 병 번호가 없는 이미지.
        가로 --width로 줄여 data/subset/images/{stem}.jpg (JPEG 90), data/subset/labels.csv 작성.
-       data/subset/은 매번 지우고 새로 만든다.
+       data/subset/images/는 매번 지우고 새로 만든다. split*.csv(분할)는 지우지 않는다 (표본이 바뀌면 split.py를 다시 실행).
 
 zip은 압축을 풀지 않고 읽기만 한다.
 """
@@ -97,9 +97,9 @@ def pick(rows, per_class, seed):
 
 
 def write_subset(vs_path, sample, out_dir, width):
-    if out_dir.exists():
-        shutil.rmtree(out_dir)
     img_dir = out_dir / "images"
+    if img_dir.exists():
+        shutil.rmtree(img_dir)  # split*.csv는 남긴다
     img_dir.mkdir(parents=True)
     with zipfile.ZipFile(vs_path) as vs, open(out_dir / "labels.csv", "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
@@ -138,5 +138,8 @@ if __name__ == "__main__":
     write_subset(a.vs, sample, a.data_dir / "subset", a.width)
 
     print(f"표본 {len(sample):,}장 -> {a.data_dir / 'subset'}")
+    kept = sorted(p.name for p in (a.data_dir / "subset").glob("split*.csv"))
+    if kept:
+        print(f"  기존 분할 유지: {', '.join(kept)} (표본이 바뀌었다면 split.py를 다시 실행)")
     for cls in ORDER:
         print(f"  {cls}: {sum(has(r, cls) for r in sample):,}장")
