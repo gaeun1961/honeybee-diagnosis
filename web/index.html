@@ -420,8 +420,8 @@ a:focus-visible, button:focus-visible { outline: 3px solid var(--honey); outline
   <div class="wrap">
     <p class="label" style="color: var(--muted)">서비스 미리보기</p>
     <h2 style="margin-top: 12px">사진을 올리면 질병을 가려냅니다</h2>
-    <p class="intro">분류 모델이 사진 한 장을 보고 클래스별 확률을 돌려주고, 이미지 속 병변 위치를 박스로 보여주는 화면을 만들 예정입니다.</p>
-    <span class="badge" id="badge">예시 화면 · 모델 연결 전, 아래 확률은 샘플 값입니다</span>
+    <p class="intro">분류 모델이 사진 한 장을 보고 클래스별 확률을 돌려주고, 모델이 주목한 위치를 Grad-CAM 히트맵으로 보여줍니다.</p>
+    <span class="badge" id="badge">예시 화면 · 아래 확률은 샘플 값입니다. 로컬 서버를 켜고 내 사진을 올리면 실제 모델 결과가 나옵니다</span>
 
     <div class="demo-grid">
       <div class="panel">
@@ -460,7 +460,7 @@ a:focus-visible, button:focus-visible { outline: 3px solid var(--honey); outline
           <img id="cam" alt="병변 위치 Grad-CAM 히트맵을 올린 사진에 겹친 그림">
           <figcaption id="cam-cap">병변 위치(Grad-CAM)</figcaption>
         </figure>
-        <p class="note">실제 서비스에서는 가장 높은 확률과 함께 이미지 속 병변 위치를 박스로 표시하고, 확률이 낮으면 양봉가에게 재촬영을 요청합니다.</p>
+        <p class="note">유충 사진 전용입니다. 성충이나 관계없는 사진에도 확률이 나오니 참고용으로만 보세요. 학습 데이터의 두 촬영 장소(B·C) 밖에서 찍은 사진의 성능은 확인하지 않았습니다.</p>
       </div>
     </div>
   </div>
