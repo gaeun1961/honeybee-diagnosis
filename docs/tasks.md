@@ -10,7 +10,7 @@
 - [x] T1: PR #38 마무리 — in_carbon_monoxide 필터를 "0 미만만 제외"로, README 한계 문장 수정 (요구사항: R-06) — PR #38
 - [x] T2: make_subset.py가 split.csv를 지우지 않는지 확인, 지우면 수정 (요구사항: R-06) — 확인만 함: images/만 지우고 split*.csv는 남김, 수정 없음
 - [x] T3: Grad-CAM 검증 — test에서 히트맵 최고점이 라벨 박스 안에 드는 비율을 클래스별·B/C별로 docs에 기록 (요구사항: R-08, 선행: T1) — PR #42
-- [ ] T4: 확률 보정 — val로 temperature scaling, 보정 전후 ECE와 신뢰도 표를 docs에 기록, serve.py에 옵션으로 적용 (요구사항: R-07, 선행: T2)
+- [x] T4: 확률 보정 — val로 temperature scaling, 보정 전후 ECE와 신뢰도 표를 docs에 기록, serve.py에 옵션으로 적용 (요구사항: R-07, 선행: T2) — PR #46
 - [ ] T5: 웹 결과 화면에 "유충 사진 전용·참고용·다른 장소 성능 미확인" 안내와 서버 꺼짐 안내 추가 (요구사항: R-03, R-07)
 - [ ] T6: 오프닝 마지막 장면 → 서비스 미리보기로 가는 CTA 연결 (요구사항: R-04, 선행: T5)
 - [ ] T7: (선택) 512px 8epoch 실험으로 부저병 향상이 해상도 때문인지 분리 (요구사항: R-06)
