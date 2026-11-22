@@ -1,6 +1,7 @@
 """val/test 전체 추론 -> 임계값 조정, 라벨 조합별 오답, 오차 큰 이미지 목록
 
-실행: python src/evaluate.py [--weights models/best.pt]
+실행: python src/evaluate.py [--weights models/best.pt] [--by-site]
+--by-site: test만 추론해 파일명 첫 글자(촬영 장소/장비, 예: B/C)별 클래스 AP -> docs/site_eval.md (다른 분석은 건너뜀)
 - 전처리는 train.py 평가용과 같음 (16:9 리사이즈, ImageNet 정규화)
 - val에서 클래스별 F1이 최대인 임계값을 찾고, test에서 0.5 기준과 비교
 - test 정답 라벨 조합별로 클래스마다 잘못 켠 장수(+)와 놓친 장수(-)
@@ -14,7 +15,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from sklearn.metrics import f1_score
+from sklearn.metrics import average_precision_score, f1_score
 from torch.utils.data import DataLoader
 from torchvision import transforms
 
@@ -23,6 +24,7 @@ from train import LABELS, MEAN, STD, Larva, load_rows
 
 ROOT = Path(__file__).resolve().parent.parent
 TOP_ERRORS = 15
+MIN_POS = 5  # site별 AP: 양성이 이보다 적으면 "표본 부족"
 SIZE_BINS = [("작음 <1%", 0.0, 0.01), ("중간 1~5%", 0.01, 0.05), ("큼 >=5%", 0.05, float("inf"))]
 
 
@@ -68,6 +70,27 @@ def size_recall(rows, y, pred):
     return out
 
 
+def site_ap(files, y, p):
+    """파일명 첫 글자별 [site, 장수, (양성 수, AP 또는 사유) x 클래스, 평균 AP]"""
+    site = np.array([f[0] for f in files])
+    rows = []
+    for s in sorted(set(site)):
+        m = site == s
+        cells, aps = [], []
+        for k in range(len(LABELS)):
+            pos = int(y[m, k].sum())
+            if pos < MIN_POS:
+                cells += [pos, "표본 부족"]
+            elif pos == m.sum():
+                cells += [pos, "음성 없음"]
+            else:
+                ap = average_precision_score(y[m, k], p[m, k])
+                aps.append(ap)
+                cells += [pos, f"{ap:.3f}"]
+        rows.append([s, int(m.sum()), *cells, f"{np.mean(aps):.3f} ({len(aps)}개 클래스)" if aps else "-"])
+    return rows
+
+
 def table(headers, rows):
     return "\n".join(["| " + " | ".join(headers) + " |", "|" + "---|" * len(headers)]
                      + ["| " + " | ".join(map(str, r)) + " |" for r in rows])
@@ -79,11 +102,25 @@ def main():
     ap.add_argument("--batch", type=int, default=32)
     ap.add_argument("--data-dir", type=Path, default=ROOT / "data")
     ap.add_argument("--out-root", type=Path, default=ROOT, help="docs/eval_errors.md를 쓸 위치")
+    ap.add_argument("--by-site", action="store_true", help="test를 파일명 첫 글자별로 나눠 클래스별 AP만 계산")
     a = ap.parse_args()
 
     model, size = load_model(a.weights)
     sub = a.data_dir / "subset"
     rows = load_rows(sub)
+    if a.by_site:
+        yt, pt = infer(model, sub / "images", rows["test"], size, a.batch)
+        headers = ["첫 글자", "test 장수"] + [h for c in LABELS for h in (f"{c} 양성", f"{c} AP")] + ["평균 AP"]
+        md = "\n".join(["# 파일명 첫 글자(촬영 장소)별 test AP", "",
+                        f"`python src/evaluate.py --by-site`로 생성. 가중치 `{a.weights.name}` (입력 {size}px), 기본 분할 test {len(yt)}장.",
+                        f"양성이 {MIN_POS}장 미만인 클래스는 \"표본 부족\", 전부 양성이면 \"음성 없음\"으로 AP를 내지 않음. 평균 AP는 AP를 낸 클래스만 평균.", "",
+                        table(headers, site_ap([r["file"] for r in rows["test"]], yt, pt))]) + "\n"
+        path = a.out_root / "docs/site_eval.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(md, encoding="utf-8")
+        print(md)
+        print("wrote", path)
+        return
     yv, pv = infer(model, sub / "images", rows["val"], size, a.batch)
     yt, pt = infer(model, sub / "images", rows["test"], size, a.batch)
 
