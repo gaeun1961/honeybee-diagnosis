@@ -34,3 +34,7 @@
 6. 나에게 3줄로 보고: 한 일 / 리뷰 결과 / 다음 작업.
 
 기획과 다르게 가야 할 것 같으면 구현 전에 멈추고 나에게 묻는다.
+
+Notion 페이지: [https://app.notion.com/p/41673aa7bb8d81798746d99a8f5b7ced](https://app.notion.com/p/41673aa7bb8d81798746d99a8f5b7ced)
+
+"일지 써"라고 하면 devlog에게 맡긴다. PR마다 자동으로 쓰지 않는다.
