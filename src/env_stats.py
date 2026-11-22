@@ -4,7 +4,8 @@
 VL.zip은 압축을 풀지 않고 zipfile로 하나씩 읽는다. 문서에는 집계값만 쓰고 원본 값·이미지 경로는 쓰지 않는다.
 
 - 필드별 존재율(키 있음), 빈 배열 비율, 원소 결측(null/NaN) 비율, 범위 밖 값, 이미지당 시계열 길이
-  범위 밖 값(습도 0~100, 온도 -40~80, 일산화탄소 0~5000 밖)은 센서 오류로 보고 결측처럼 평균에서 뺀다
+  범위 밖 값(습도 0~100, 온도 -40~80 밖, in_carbon_monoxide는 0 미만)은 센서 오류로 보고 결측처럼 평균에서 뺀다
+- in_carbon_monoxide: 음수/5000 초과 값이 있는 이미지 수, 원소 백분위수(필터 전 값)
 - 이미지마다 필드별 시계열 평균을 구한 뒤
   - category_id별(그 번호가 있는 이미지) 평균·표준편차, 병 번호(1~3)가 없는 이미지는 "병 없음"
   - 파일명 접두어(앞 3칸, 벌통 추정)별 평균과 접두어 안 표준편차 (같은 접두어 안에서 값이 거의 같은지)
@@ -25,12 +26,15 @@ ROOT = Path(__file__).resolve().parent.parent
 CATS = {0: "유충_정상", 1: "유충_응애", 2: "유충_석고병", 3: "유충_부저병"}
 PREFIX_PARTS = 3
 MAX_PREFIX_ROWS = 60
-VALID = {"humidity": (0.0, 100.0), "temperature": (-40.0, 80.0), "carbon_monoxide": (0.0, 5000.0)}  # 필드 이름에 포함된 단어 -> 허용 범위
+VALID = {"humidity": (0.0, 100.0), "temperature": (-40.0, 80.0), "carbon_monoxide": (0.0, math.inf)}  # 필드 이름에 포함된 단어 -> 허용 범위
+CO = "in_carbon_monoxide"
+CO_HIGH = 5000.0  # 이전 필터 기준 (지금은 0 미만만 제외)
+HIST_LO, HIST_HI = -100_000, 200_000  # 백분위수용 정수 히스토그램 범위 (밖은 양 끝 칸에 모임)
 ARRAY_RE = re.compile(rb'"(\w+)"\s*:\s*\[([^\]]*)\]')
 
 
 def parse_env(raw):
-    """environment 부분만 빠르게 파싱 -> {필드: (유효 값 배열, 결측 수, 범위 밖 수)}. 없으면 None"""
+    """environment 부분만 빠르게 파싱 -> {필드: (유효 값 배열, 결측 수, 범위 밖 수, 결측 뺀 원래 값)}. 없으면 None"""
     k = raw.find(b'"environment"')
     if k < 0:
         return None
@@ -38,7 +42,7 @@ def parse_env(raw):
     for key, body in ARRAY_RE.findall(raw[k:]):
         body = body.strip()
         if not body:
-            env[key.decode()] = (np.empty(0), 0, 0)
+            env[key.decode()] = (np.empty(0), 0, 0, np.empty(0))
             continue
         if b"null" in body or b"NaN" in body:  # 결측이 섞이면 느린 경로
             vals = [v for v in json.loads(b"[" + body + b"]")]
@@ -51,7 +55,7 @@ def parse_env(raw):
         for word, (lo, hi) in VALID.items():
             if word in name:
                 ok &= (arr >= lo) & (arr <= hi)
-        env[name] = (arr[ok], int(nan.sum()), int((~ok & ~nan).sum()))
+        env[name] = (arr[ok], int(nan.sum()), int((~ok & ~nan).sum()), arr[~nan])
     return env
 
 
@@ -63,6 +67,7 @@ def collect(vl_path):
     n = 0
     present, empty, missing_el, total_el = Counter(), Counter(), Counter(), Counter()
     oor_el, oor_img = Counter(), Counter()
+    co = {"neg": 0, "high": 0, "both": 0, "hist": np.zeros(HIST_HI - HIST_LO + 1, dtype=np.int64)}
     lengths = defaultdict(list)
     img_means = []  # (category set, prefix, {필드: 평균})
     no_env = 0
@@ -79,7 +84,14 @@ def collect(vl_path):
                 no_env += 1
                 continue
             means = {}
-            for f, (arr, miss, oor) in env.items():
+            for f, (arr, miss, oor, raw_vals) in env.items():
+                if f == CO and len(raw_vals):
+                    neg, high = bool((raw_vals < 0).any()), bool((raw_vals > CO_HIGH).any())
+                    co["neg"] += neg
+                    co["high"] += high
+                    co["both"] += neg and high
+                    idx = np.clip(np.round(raw_vals), HIST_LO, HIST_HI).astype(np.int64) - HIST_LO
+                    co["hist"] += np.bincount(idx, minlength=len(co["hist"]))
                 present[f] += 1
                 lengths[f].append(len(arr) + miss + oor)
                 missing_el[f] += miss
@@ -94,7 +106,7 @@ def collect(vl_path):
             if (i + 1) % 2000 == 0:
                 print(f"  {i + 1:,}/{len(names):,}", flush=True)
     return dict(n=n, no_env=no_env, present=present, empty=empty, missing_el=missing_el, total_el=total_el,
-                oor_el=oor_el, oor_img=oor_img,
+                oor_el=oor_el, oor_img=oor_img, co=co,
                 lengths=lengths, img_means=img_means)
 
 
@@ -110,6 +122,31 @@ def ms(vals):
     return f"{a.mean():.2f} ± {a.std():.2f}"
 
 
+def co_percentiles(hist, qs=(1, 50, 99, 99.9)):
+    cum, total = np.cumsum(hist), hist.sum()
+    out = []
+    for q in qs:
+        i = int(np.searchsorted(cum, q / 100 * total))
+        v = i + HIST_LO
+        out.append(f"≤ {HIST_LO:,}" if i == 0 else f"≥ {HIST_HI:,}" if i == len(hist) - 1 else f"{v:,}")
+    return out
+
+
+def co_section(s):
+    co = s["co"]
+    if not co["hist"].sum():
+        return []
+    qs = (1, 50, 99, 99.9)
+    return ["## in_carbon_monoxide 값 확인", "",
+            "필드 이름은 일산화탄소(CO)지만, 값 크기상 이산화탄소(CO2) ppm으로 보임 (미검증). "
+            f"이전 필터(0~{CO_HIGH:,.0f} 밖 제외)는 실제 값까지 지울 수 있어 지금은 0 미만만 제외한다.", "",
+            f"- 음수 값이 있는 이미지: {co['neg']:,}장",
+            f"- {CO_HIGH:,.0f} 초과 값이 있는 이미지: {co['high']:,}장",
+            f"- 둘 다 있는 이미지: {co['both']:,}장 (0~{CO_HIGH:,.0f} 밖 값이 있는 이미지 = {co['neg'] + co['high'] - co['both']:,}장)", "",
+            "원소 백분위수 (필터 전, 정수로 반올림해 집계):", "",
+            table([f"{q}%" for q in qs], [co_percentiles(co["hist"], qs)]), ""]
+
+
 def report(s, vl_rel):
     fields = sorted(s["present"], key=lambda f: (not f.startswith("in_"), f))
     n = s["n"]
@@ -117,7 +154,7 @@ def report(s, vl_rel):
          f"`python src/env_stats.py`로 생성. 대상: `{vl_rel}`의 유충 JSON {n:,}개. 집계값만 기록 (원본 값·이미지 경로 없음).",
          f"environment 키가 없는 JSON: {s['no_env']:,}개. 필드 이름은 JSON 그대로 (예: in_carbon_monoxide는 이름상 일산화탄소).", "",
          "## 필드별 존재율·결측률", "",
-         "범위 밖 값 = 습도 0~100, 온도 -40~80, in_carbon_monoxide 0~5000 밖 (센서 오류로 보고 평균에서 뺌).", "",
+         "범위 밖 값 = 습도 0~100, 온도 -40~80 밖, in_carbon_monoxide 0 미만 (센서 오류로 보고 평균에서 뺌).", "",
          table(["필드", "존재율 (키 있음)", "빈 배열", "원소 결측 (null/NaN)", "범위 밖 원소", "범위 밖 값이 있는 이미지"],
                [[f, f"{s['present'][f] / n:.1%}", f"{s['empty'][f] / n:.1%}",
                  f"{s['missing_el'][f] / s['total_el'][f]:.2%}" if s["total_el"][f] else "-",
@@ -128,6 +165,7 @@ def report(s, vl_rel):
                [[f, min(s["lengths"][f]), int(np.median(s["lengths"][f])), max(s["lengths"][f]),
                  ", ".join(f"{k} ({v:,})" for k, v in Counter(s["lengths"][f]).most_common(3))] for f in fields]), ""]
 
+    L += co_section(s)
     L += ["## category_id별 평균 ± 표준편차", "",
           "이미지마다 필드별 시계열 평균을 구하고, 그 category_id가 있는 이미지끼리 평균·표준편차를 냄 (한 이미지가 여러 번호에 들어갈 수 있음). "
           "병 없음 = 병 번호(1~3)가 없는 이미지.", ""]
