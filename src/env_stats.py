@@ -3,7 +3,8 @@
 실행: python src/env_stats.py [--vl data/02.라벨링데이터/VL.zip]
 VL.zip은 압축을 풀지 않고 zipfile로 하나씩 읽는다. 문서에는 집계값만 쓰고 원본 값·이미지 경로는 쓰지 않는다.
 
-- 필드별 존재율(키 있음), 빈 배열 비율, 원소 결측(null/NaN) 비율, 이미지당 시계열 길이
+- 필드별 존재율(키 있음), 빈 배열 비율, 원소 결측(null/NaN) 비율, 범위 밖 값, 이미지당 시계열 길이
+  범위 밖 값(습도 0~100, 온도 -40~80 밖)은 센서 오류로 보고 결측처럼 평균에서 뺀다. 범위를 모르는 필드(CO 등)는 거르지 않음
 - 이미지마다 필드별 시계열 평균을 구한 뒤
   - category_id별(그 번호가 있는 이미지) 평균·표준편차, 병 번호(1~3)가 없는 이미지는 "병 없음"
   - 파일명 접두어(앞 3칸, 벌통 추정)별 평균과 접두어 안 표준편차 (같은 접두어 안에서 값이 거의 같은지)
@@ -24,11 +25,12 @@ ROOT = Path(__file__).resolve().parent.parent
 CATS = {0: "유충_정상", 1: "유충_응애", 2: "유충_석고병", 3: "유충_부저병"}
 PREFIX_PARTS = 3
 MAX_PREFIX_ROWS = 60
+VALID = {"humidity": (0.0, 100.0), "temperature": (-40.0, 80.0)}  # 필드 이름에 포함된 단어 -> 허용 범위
 ARRAY_RE = re.compile(rb'"(\w+)"\s*:\s*\[([^\]]*)\]')
 
 
 def parse_env(raw):
-    """environment 부분만 빠르게 파싱 -> {필드: (값 배열, 결측 수)}. 없으면 None"""
+    """environment 부분만 빠르게 파싱 -> {필드: (유효 값 배열, 결측 수, 범위 밖 수)}. 없으면 None"""
     k = raw.find(b'"environment"')
     if k < 0:
         return None
@@ -36,14 +38,20 @@ def parse_env(raw):
     for key, body in ARRAY_RE.findall(raw[k:]):
         body = body.strip()
         if not body:
-            env[key.decode()] = (np.empty(0), 0)
+            env[key.decode()] = (np.empty(0), 0, 0)
             continue
         if b"null" in body or b"NaN" in body:  # 결측이 섞이면 느린 경로
             vals = [v for v in json.loads(b"[" + body + b"]")]
             arr = np.array([math.nan if v is None else float(v) for v in vals])
         else:
             arr = np.array([float(v) for v in body.split(b",")])
-        env[key.decode()] = (arr[~np.isnan(arr)], int(np.isnan(arr).sum()))
+        name = key.decode()
+        nan = np.isnan(arr)
+        ok = ~nan
+        for word, (lo, hi) in VALID.items():
+            if word in name:
+                ok &= (arr >= lo) & (arr <= hi)
+        env[name] = (arr[ok], int(nan.sum()), int((~ok & ~nan).sum()))
     return env
 
 
@@ -54,6 +62,7 @@ def prefix_of(name):
 def collect(vl_path):
     n = 0
     present, empty, missing_el, total_el = Counter(), Counter(), Counter(), Counter()
+    oor_el, oor_img = Counter(), Counter()
     lengths = defaultdict(list)
     img_means = []  # (category set, prefix, {필드: 평균})
     no_env = 0
@@ -70,12 +79,14 @@ def collect(vl_path):
                 no_env += 1
                 continue
             means = {}
-            for f, (arr, miss) in env.items():
+            for f, (arr, miss, oor) in env.items():
                 present[f] += 1
-                lengths[f].append(len(arr) + miss)
+                lengths[f].append(len(arr) + miss + oor)
                 missing_el[f] += miss
-                total_el[f] += len(arr) + miss
-                if len(arr) + miss == 0:
+                oor_el[f] += oor
+                oor_img[f] += oor > 0
+                total_el[f] += len(arr) + miss + oor
+                if len(arr) + miss + oor == 0:
                     empty[f] += 1
                 if len(arr):
                     means[f] = float(arr.mean())
@@ -83,6 +94,7 @@ def collect(vl_path):
             if (i + 1) % 2000 == 0:
                 print(f"  {i + 1:,}/{len(names):,}", flush=True)
     return dict(n=n, no_env=no_env, present=present, empty=empty, missing_el=missing_el, total_el=total_el,
+                oor_el=oor_el, oor_img=oor_img,
                 lengths=lengths, img_means=img_means)
 
 
@@ -105,9 +117,12 @@ def report(s, vl_rel):
          f"`python src/env_stats.py`로 생성. 대상: `{vl_rel}`의 유충 JSON {n:,}개. 집계값만 기록 (원본 값·이미지 경로 없음).",
          f"environment 키가 없는 JSON: {s['no_env']:,}개. 필드 이름은 JSON 그대로 (예: in_carbon_monoxide는 이름상 일산화탄소).", "",
          "## 필드별 존재율·결측률", "",
-         table(["필드", "존재율 (키 있음)", "빈 배열", "원소 결측 (null/NaN)"],
+         "범위 밖 값 = 습도 0~100, 온도 -40~80 밖 (센서 오류로 보고 평균에서 뺌). in_carbon_monoxide는 범위를 정하지 않아 거르지 않음.", "",
+         table(["필드", "존재율 (키 있음)", "빈 배열", "원소 결측 (null/NaN)", "범위 밖 원소", "범위 밖 값이 있는 이미지"],
                [[f, f"{s['present'][f] / n:.1%}", f"{s['empty'][f] / n:.1%}",
-                 f"{s['missing_el'][f] / s['total_el'][f]:.2%}" if s["total_el"][f] else "-"] for f in fields]), "",
+                 f"{s['missing_el'][f] / s['total_el'][f]:.2%}" if s["total_el"][f] else "-",
+                 f"{s['oor_el'][f]:,} ({s['oor_el'][f] / s['total_el'][f]:.3%})" if s["total_el"][f] else "-",
+                 f"{s['oor_img'][f]:,} ({s['oor_img'][f] / n:.1%})"] for f in fields]), "",
          "## 이미지당 시계열 길이", "",
          table(["필드", "최소", "중앙값", "최대", "가장 흔한 길이 (이미지 수)"],
                [[f, min(s["lengths"][f]), int(np.median(s["lengths"][f])), max(s["lengths"][f]),
