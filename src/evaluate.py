@@ -29,12 +29,12 @@ SIZE_BINS = [("작음 <1%", 0.0, 0.01), ("중간 1~5%", 0.01, 0.05), ("큼 >=5%"
 
 
 @torch.no_grad()
-def infer(model, img_dir, rows, size, batch):
+def infer(model, img_dir, rows, size, batch, logits=False):
     tf = transforms.Compose([transforms.Resize((round(size * 9 / 16), size)),
                              transforms.ToTensor(), transforms.Normalize(MEAN, STD)])
     ys, ps = [], []
     for x, y in DataLoader(Larva(img_dir, rows, tf), batch_size=batch):  # shuffle 없음 -> rows 순서 유지
-        ps.append(torch.sigmoid(model(x)))
+        ps.append(model(x) if logits else torch.sigmoid(model(x)))
         ys.append(y)
     return torch.cat(ys).numpy().astype(int), torch.cat(ps).numpy()
 

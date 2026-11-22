@@ -1,7 +1,8 @@
 """유충 사진 진단 API (FastAPI, CPU)
 
-실행: python src/serve.py [--weights models/best.pt] [--size 512] [--port 8000]
+실행: python src/serve.py [--weights models/best.pt] [--size 512] [--port 8000] [--temperature models/temperature.json]
 - 시작할 때 모델을 한 번만 로드
+- --temperature: probs를 sigmoid(logit / T)로 보정 (기본 꺼짐). 보정해도 0.5 판정은 그대로
 - POST /predict (multipart, 이미지 1장) -> {probs, verdict, top, cam}
     probs: {응애, 석고병, 부저병} sigmoid 확률 / verdict: 0.5 이상인 병 이름들, 없으면 ["정상"]
     top: 확률 최고 병 / cam: Grad-CAM(top 기준)을 원본에 겹친 JPEG data URL
@@ -12,6 +13,8 @@
 import argparse
 import base64
 import io
+import json
+import math
 import threading
 from pathlib import Path
 
@@ -28,8 +31,18 @@ MAX_BYTES = 20 * 1024 * 1024
 ORIGIN_REGEX = r"http://(localhost|127\.0\.0\.1)(:\d+)?|null"
 
 
-def create_app(weights, size):
+def calibrated(probs, ts):
+    """sigmoid(logit / T). logit = log(p / (1 - p))"""
+    out = []
+    for p, t in zip(probs, ts):
+        p = min(max(p, 1e-7), 1 - 1e-7)
+        out.append(1 / (1 + math.exp(-math.log(p / (1 - p)) / t)))
+    return out
+
+
+def create_app(weights, size, temperature=None):
     model, ckpt_size = load_model(weights)
+    ts = json.loads(Path(temperature).read_text(encoding="utf-8"))["T"] if temperature else None
     if ckpt_size != size:
         print(f"주의: 학습 입력 가로 {ckpt_size}, 서버 입력 가로 {size}")
     tf = preprocess(size)
@@ -53,6 +66,8 @@ def create_app(weights, size):
             raise HTTPException(400, "이미지 파일이 아닙니다")
         with lock:
             probs, top, cam = grad_cam(model, tf(img).unsqueeze(0))
+        if ts:
+            probs = calibrated(probs, ts)
         buf = io.BytesIO()
         overlay(img, cam).save(buf, "JPEG", quality=85)
         return {
@@ -70,5 +85,6 @@ if __name__ == "__main__":
     ap.add_argument("--weights", type=Path, default=ROOT / "models/best.pt")
     ap.add_argument("--size", type=int, default=512, help="입력 가로 (세로 = size*9/16)")
     ap.add_argument("--port", type=int, default=8000)
+    ap.add_argument("--temperature", type=Path, help="calibrate.py가 만든 T json. 주면 probs만 보정 (판정·Grad-CAM은 그대로)")
     a = ap.parse_args()
-    uvicorn.run(create_app(a.weights, a.size), host="127.0.0.1", port=a.port)
+    uvicorn.run(create_app(a.weights, a.size, a.temperature), host="127.0.0.1", port=a.port)
