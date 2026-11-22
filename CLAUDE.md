@@ -18,3 +18,23 @@
 - git·PR: `.claude/rules/git-workflow.md`
 - 데이터·비밀값: `.claude/rules/data-safety.md`
 - 모르는 건 추측하지 말고 물어볼 것
+
+
+
+
+## 작업 흐름 (docs/[tasks.md](http://tasks.md)가 있는 프로젝트만)
+
+"다음 작업 진행해"를 받으면:
+
+1. planner에게 다음 작업 지시문을 받는다.
+2. GitHub 이슈 → 브랜치 생성 후 구현한다.
+3. reviewer에게 검토를 맡긴다. "수정 필요"면 고치고 다시 맡긴다 (최대 2회, 이후 나에게 보고).
+4. docs/[tasks.md](http://tasks.md)에 체크하고 PR 번호를 적는다.
+5. 커밋 → PR (Closes #이슈번호).
+6. 나에게 3줄로 보고: 한 일 / 리뷰 결과 / 다음 작업.
+
+기획과 다르게 가야 할 것 같으면 구현 전에 멈추고 나에게 묻는다.
+
+Notion 페이지: [https://app.notion.com/p/41673aa7bb8d81798746d99a8f5b7ced](https://app.notion.com/p/41673aa7bb8d81798746d99a8f5b7ced)
+
+"일지 써"라고 하면 devlog에게 맡긴다. PR마다 자동으로 쓰지 않는다.
