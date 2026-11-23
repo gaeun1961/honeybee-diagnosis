@@ -179,6 +179,9 @@ a:focus-visible, button:focus-visible { outline: 3px solid var(--honey); outline
   font-variant-numeric: tabular-nums;
 }
 .step .big small { font-size: 0.55em; color: var(--band-muted); margin-left: 8px; }
+.cta { display: inline-block; margin-top: 20px; padding: 12px 22px; border-radius: 999px; background: var(--honey); color: #120E07; font-weight: 700; text-decoration: none; }
+.step:not(.on) .cta { visibility: hidden; } /* 안 보이는 장면에서는 Tab 포커스도 막음 */
+html { scroll-behavior: smooth; }
 .legend { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 18px; margin-top: 20px; font-size: 14px; }
 .legend span { display: flex; align-items: center; gap: 8px; }
 .legend i { width: 11px; height: 11px; clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%); background: var(--c); display: inline-block; flex: none; }
@@ -316,6 +319,7 @@ a:focus-visible, button:focus-visible { outline: 3px solid var(--honey); outline
 @media (prefers-reduced-motion: reduce) {
   .rise, .scroll-cue i { animation: none; }
   .hex, .step, .row .fill { transition: none; }
+  html { scroll-behavior: auto; }
 }
 </style>
 
@@ -391,6 +395,7 @@ a:focus-visible, button:focus-visible { outline: 3px solid var(--honey); outline
         <h2>서비스가 읽는 건 <span class="em">이 한 칸</span>입니다</h2>
         <p>유충 사진 한 장을 보고 병마다 확률을 내고, 모델이 주목한 위치를 Grad-CAM 히트맵으로 보여줍니다. 아래 그림은 직접 그린 예시 일러스트이고 실제 데이터 이미지가 아닙니다.</p>
         <div class="big num">응애 의심<small>87% · 예시</small></div>
+        <a class="cta" href="#demo">사진 올려 보기</a>
       </div>
     </div>
     <div class="story-canvas pad-r" data-step="0">
@@ -416,7 +421,7 @@ a:focus-visible, button:focus-visible { outline: 3px solid var(--honey); outline
   </div>
 </section>
 
-<section class="demo" id="demo">
+<section class="demo" id="demo" tabindex="-1">
   <div class="wrap">
     <p class="label" style="color: var(--muted)">서비스 미리보기</p>
     <h2 style="margin-top: 12px">사진을 올리면 질병을 가려냅니다</h2>
