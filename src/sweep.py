@@ -5,6 +5,7 @@
   base384     384px 기준 재현 (train.py 기본 설정)
   aug384      384px + 증강 강화 (회전 ±15도, 강한 색 변화)
   size512_e12 512px + 12 epoch
+  size512_e8  512px + 8 epoch (해상도 효과와 epoch 효과를 나누기 위함)
   prefix384   파일명 접두어(앞 3칸) 단위 분할 + 384px (분할: data/subset/split_prefix.csv)
 
 - 가중치: models/sweep/{이름}/best.pt (models/best.pt는 건드리지 않음)
@@ -29,6 +30,7 @@ EXPERIMENTS = [
     ("base384", "384px 기준 재현", ["--size", "384", "--epochs", "8"], None),
     ("aug384", "384px + 증강 강화(회전·색상)", ["--size", "384", "--epochs", "8", "--aug", "strong"], None),
     ("size512_e12", "512px + 12 epoch", ["--size", "512", "--epochs", "12"], None),
+    ("size512_e8", "512px + 8 epoch (해상도만 변경)", ["--size", "512", "--epochs", "8"], None),
     ("prefix384", "접두어(앞 3칸) 단위 분할 + 384px", ["--size", "384", "--epochs", "8"], "prefix"),
 ]
 
